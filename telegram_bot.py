@@ -4,6 +4,7 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes
 from flask import Flask
 from threading import Thread
+# الاستيرادات الضرورية لـ Gemini API
 from google import genai
 from google.genai.errors import APIError
 
@@ -16,7 +17,7 @@ app = Flask(__name__)
 
 @app.route('/')
 def home():
-    # رد بسيط للتأكد من أن الخدمة تعمل في Uptime Robot
+    # رد بسيط للتأكد من أن الخدمة تعمل في Render
     return "Manar Bot is active and running (Polling mode)."
 
 def run_flask():
@@ -32,7 +33,6 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # معلومات الدكتورة منار عمران والروابط
-# الروابط تم تنسيقها لتبدو احترافية
 WEBSITE = "https://manaromran11.com/"
 ACADEMY = "https://manaratacademy.com/"
 YOUTUBE = "https://www.youtube.com/@manaromran1157"
@@ -42,57 +42,55 @@ INSTAGRAM = "https://www.instagram.com/manarmomran/"
 WHATSAPP_LINK = "https://api.whatsapp.com/send/?phone=905395448547&text&type=phone_number&app_absent=0"
 PHONE = "+905395448547"
 
-# تخصيص النموذج والسياق (System Instruction)
-MODEL_NAME = "gemini-2.5-flash"
+# ----------------------------------------------------------------------
+# نظام التوليد المعزز بالاسترجاع (RAG)
+# ----------------------------------------------------------------------
+# 1. قراءة محتوى ملف قاعدة المعرفة (courses_data.txt)
+COURSE_DATA = ""
+try:
+    # قراءة الملف بترميز UTF-8 لدعم اللغة العربية
+    with open("courses_data.txt", "r", encoding="utf-8") as f:
+        COURSE_DATA = f.read()
+except FileNotFoundError:
+    logger.warning("ملف courses_data.txt غير موجود. سيتم الاعتماد على معلومات Gemini العامة.")
+    COURSE_DATA = "لم يتم توفير قاعدة معرفة خاصة. اعتمد على معرفتك، لكن التزم بهوية الدكتورة منار عمران."
 
-# القواعد المخصصة والاحترافية للبوت (مدمجة مع الـ AI)
+# 2. التوجيه القوي للنظام لضمان التخصص (System Prompt for RAG)
 SYSTEM_PROMPT = f"""
-أنت بوت ذكاء اصطناعي محترف يمثل الدكتورة منار عمران وأكاديمية منارات.
-وظيفتك الأساسية هي تقديم ردود احترافية وشرح عن الكورسات المتوفرة (أكثر من 30 كورس).
+أنت بوت الدردشة الرسمي والمخصص للدكتورة منار عمران في أكاديمية منارات.
+مهمتك الوحيدة هي الإجابة على استفسارات المستخدمين بشكل احترافي، دقيق، وداعم.
 
-معلوماتك الأساسية:
-- موقع د. منار عمران: {WEBSITE}
-- موقع أكاديمية منارات: {ACADEMY}
+=== قواعد صارمة يجب الالتزام بها ===
+1. الهوية: يجب عليك التحدث بصيغة الدكتورة منار عمران، وبأسلوب أكاديمي وراقي وداعم.
+2. المصدر الوحيد: يجب أن تستمد جميع إجاباتك عن الكورسات، والأسعار، والمواضيع، والخدمات **حصريًا** من قسم "قاعدة المعرفة" أدناه.
+3. إذا لم تجد الإجابة: إذا كان السؤال خارج نطاق قاعدة المعرفة أو يتطلب معلومات غير موجودة فيها، يجب أن تطلب من المستخدم بلطف زيارة الموقعين الرسميين ({WEBSITE} و {ACADEMY}) للمزيد من التفاصيل.
+4. المنع التام: ممنوع منعاً باتاً ذكر أسماء أي أشخاص أو أكاديميات أو مواقع إلكترونية أو الترويج لأي محتوى أو فكرة خارجة عن نطاق محتوى الدكتورة منار عمران الرسمية.
+5. التنسيق: استخدم علامات التنسيق (مثل العناوين الجريئة **، والقوائم) لتحسين القراءة في تلغرام.
 
-قواعد الاستخدام الصارمة:
-- **ممنوع نشر الإعلانات:** إذا طلب منك المستخدم الإعلان أو النشر، اعتذر بلطف وذكّر بأن البوت مخصص للاستشارات والمعلومات حول الكورسات فقط.
-- **في حال طلب استشارة أو كتب "أريد استشارة":** لا ترد من الذكاء الاصطناعي، بل اطلب منه التواصل عبر الواتساب أو الهاتف (البيانات المتاحة لديك).
+=== قاعدة المعرفة الخاصة بكورسات الدكتورة منار عمران ===
+{COURSE_DATA}
 """
 
 # ======================================================================
-# 2. وظائف الذكاء الاصطناعي
+# 2. وظائف الأوامر الثابتة
 # ======================================================================
 
-def get_ai_response(prompt: str) -> str:
-    """يرسل الاستفسار إلى نموذج Gemini/Gemma ويستقبل الرد."""
-    try:
-        # قراءة مفتاح API من متغير البيئة - آمن
-        api_key = os.getenv('GEMINI_API_KEY')
-        if not api_key:
-            return "عذراً، مفتاح الذكاء الاصطناعي (API Key) غير مُهيأ. يُرجى التواصل مع الدعم الفني."
+# الأوامر الثابتة المستخدمة في دالة handle_message
+async def website(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    message = f"📚 موقع الدكتورة منار عمران الرسمي:\n[اضغط هنا لزيارة الموقع]({WEBSITE})"
+    await update.message.reply_text(message, parse_mode='Markdown')
 
-        ai_client = genai.Client(api_key=api_key)
-        
-        response = ai_client.models.generate_content(
-            model=MODEL_NAME,
-            contents=[
-                {"role": "system", "parts": [{"text": SYSTEM_PROMPT}]},
-                {"role": "user", "parts": [{"text": prompt}]}
-            ]
-        )
-        return response.text
+async def academy(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    message = f"🏛️ موقع أكاديمية منارات:\n[اضغط هنا لزيارة الأكاديمية]({ACADEMY})"
+    await update.message.reply_text(message, parse_mode='Markdown')
 
-    except Exception as e:
-        logger.error(f"AI Error: {e}")
-        return "عذراً، حدث خطأ فني أثناء معالجة طلبك."
+async def courses(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    message = "للاطلاع على الكورسات المتوفرة (أكثر من 30 كورس) والأسعار:\n"
+    message += f"1. [موقع الأكاديمية]({ACADEMY})\n"
+    message += f"2. [قناة اليوتيوب]({YOUTUBE})"
+    await update.message.reply_text(message, parse_mode='Markdown')
 
-
-# ======================================================================
-# 3. معالجات أوامر تلغرام والردود المخصصة
-# ======================================================================
-
-# أمر الاستشارة (مُخصص للرد على طلبات الاستشارة مباشرة)
-async def consultation_response(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def consultation(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     message = (
         "📞 *لطلب وحجز استشارة خاصة:*\n\n"
         "يرجى التواصل مباشرة عبر:\n"
@@ -102,6 +100,19 @@ async def consultation_response(update: Update, context: ContextTypes.DEFAULT_TY
     )
     await update.message.reply_text(message, parse_mode='Markdown')
 
+async def social(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    message = (
+        "🌐 *روابط منار عمران على منصات التواصل:*\n\n"
+        f"- 📺 يوتيوب: [قناة الكورسات]({YOUTUBE})\n"
+        f"- 📘 فيس بوك: [صفحة الفيس بوك]({FACEBOOK})\n"
+        f"- 🎶 تيك توك: [صفحة التيك توك]({TIKTOK})\n"
+        f"- 📸 انستكرام: [صفحة انستكرام]({INSTAGRAM})"
+    )
+    await update.message.reply_text(message, parse_mode='Markdown')
+
+# ======================================================================
+# 3. معالجات تلغرام الرئيسية (Start, Buttons, Message)
+# ======================================================================
 
 # أمر البداية
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -129,7 +140,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     if query.data == 'social_links':
         message = (
             "🌐 *روابط منار عمران على منصات التواصل:*\n\n"
-            f"- 📺 يوتيوب (للكورسات): [قناة الكورسات]({YOUTUBE})\n"
+            f"- 📺 يوتيوب: [قناة الكورسات]({YOUTUBE})\n"
             f"- 📘 فيس بوك: [صفحة الفيس بوك]({FACEBOOK})\n"
             f"- 🎶 تيك توك: [صفحة التيك توك]({TIKTOK})\n"
             f"- 📸 انستكرام: [صفحة انستكرام]({INSTAGRAM})"
@@ -139,29 +150,87 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
 # معالج الرسائل النصية العامة
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    user_query = update.message.text
-
-    # معالجة طلبات الاستشارة والإعلانات محلياً قبل AI (لضمان الدقة والسرعة)
-    if "استشارة" in user_query or "اريد استشارة" in user_query or "حجز استشارة" in user_query:
-        await consultation_response(update, context)
+    # ⚠️ أهم خطوة: تحويل الرسالة إلى أحرف صغيرة للمقارنة
+    text = update.message.text.lower()
+    
+    # ----------------------------------------------------------------------
+    # 1. التحقق من الإعلانات والأوامر الثابتة (لأولوية الردود السريعة والمخصصة)
+    # ----------------------------------------------------------------------
+    
+    # التحقق من الإعلانات (لضمان الانضباط)
+    ad_keywords = ['إعلان', 'اعلان', 'للبيع', 'للشراء', 'تسويق', 'منتج', 'خدمة مجانية', 'تبادل']
+    if any(keyword in text for keyword in ad_keywords):
+        await update.message.reply_text(
+            "⚠️ **تنبيه:** ممنوع نشر الإعلانات في هذا البوت.\n"
+            "يُرجى احترام قوانين المجموعة. شكراً لتفهمك! 🙏"
+        )
         return
-
-    # قاعدة ممنوع الإعلانات
-    if "اعلان" in user_query or "إعلان" in user_query or "انشر" in user_query or "نشر" in user_query:
-        response_text = "🚫 عذراً، هذا البوت مخصص للاستفسارات حول الكورسات والاستشارات فقط. يمنع منعاً باتاً نشر الإعلانات."
-        await update.message.reply_text(response_text)
+    
+    # الرد على طلبات ثابتة (باستدعاء الوظائف الثابتة)
+    if any(word in text for word in ['موقع', 'الموقع', 'موقعك', 'website']):
+        await website(update, context)
         return
-
-    # إرسال باقي الاستفسارات لنموذج الذكاء الاصطناعي
+    
+    if any(word in text for word in ['أكاديمية', 'اكاديمية', 'academy']):
+        await academy(update, context)
+        return
+    
+    if any(word in text for word in ['كورس', 'كورسات', 'دورة', 'دورات', 'courses']):
+        await courses(update, context)
+        return
+    
+    if any(word in text for word in ['استشارة', 'استشاره', 'consultation', 'حجز استشارة', 'اريد استشارة']):
+        await consultation(update, context)
+        return
+    
+    if any(word in text for word in ['تواصل', 'حسابات', 'سوشيال', 'فيس', 'انستا', 'يوتيوب', 'تيك توك']):
+        await social(update, context)
+        return
+    
+    # ----------------------------------------------------------------------
+    # 2. استخدام Gemini API للردود الذكية (لأي سؤال آخر غير ثابت)
+    # ----------------------------------------------------------------------
+    
+    # إرسال مؤشر الكتابة لتجنب اعتقاد المستخدم بأن البوت قد توقف
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
-    
-    ai_response = get_ai_response(user_query)
-    
-    # الرد على المستخدم
-    await update.message.reply_text(ai_response, parse_mode='Markdown')
 
-# دالة معالجة الأخطاء
+    try:
+        # قراءة المفتاح من متغيرات البيئة
+        GEMINI_API_KEY = os.getenv('GEMINI_API_KEY')
+        if not GEMINI_API_KEY:
+            logger.error("GEMINI_API_KEY غير متوفر في متغيرات البيئة.")
+            await update.message.reply_text("عذراً، مفتاح الذكاء الاصطناعي غير متوفر في إعدادات النظام.")
+            return
+
+        # تهيئة العميل واستدعاء Gemini
+        ai_client = genai.Client(api_key=GEMINI_API_KEY)
+        
+        # إرسال الرسالة إلى Gemini مع الـ SYSTEM_PROMPT لضمان التخصص (RAG)
+        response = ai_client.models.generate_content(
+            model='gemini-2.5-flash',
+            contents=update.message.text,
+            config={'system_instruction': SYSTEM_PROMPT} # إرسال التوجيه المتخصص هنا
+        )
+
+        # الرد على المستخدم بالرد المولّد من Gemini
+        await update.message.reply_text(response.text, parse_mode='Markdown')
+        return
+
+    except APIError:
+        # رسالة عند فشل اتصال API (هذا هو الخطأ الذي كنت تراه)
+        logger.error(f"Gemini API Error for message: {update.message.text}")
+        await update.message.reply_text("عذراً، حدث خطأ فني أثناء معالجة طلبك (Gemini API). يرجى التأكد من تفعيل الفوترة والمحاولة لاحقاً.")
+        return
+
+    except Exception as e:
+        # رسالة لأي خطأ آخر غير متوقع
+        logger.error(f"An unexpected error occurred in handle_message: {e}")
+        await update.message.reply_text("عذراً، حدث خطأ غير متوقع. يرجى إعادة محاولة إرسال الرسالة. 😔")
+        return
+
+# دالة معالجة الأخطاء (لأخطاء تلغرام غير المرتبطة بالرسائل)
 async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # نستخدم logging.error لتسجيل الخطأ وليس print
     logger.error(f"Exception while handling an update: {context.error}")
 
 
@@ -181,6 +250,7 @@ def main():
     
     # إضافة المعالجات
     application.add_handler(CommandHandler("start", start))
+    # لا حاجة لإضافة جميع الأوامر هنا لأن handle_message تعالج الكلمات المفتاحية
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     application.add_handler(CallbackQueryHandler(button_handler))
     
