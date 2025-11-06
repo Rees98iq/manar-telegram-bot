@@ -5,7 +5,7 @@ from telegram.ext import Application, CommandHandler, MessageHandler, filters, C
 from flask import Flask
 from threading import Thread
 from google import genai
-from google.generativeai.errors import APIError
+from google.genai.errors import APIError
 
 # ======================================================================
 # 1. إعدادات البوت والروابط (الثوابت)
