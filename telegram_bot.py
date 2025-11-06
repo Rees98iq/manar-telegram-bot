@@ -1,9 +1,11 @@
 import os
 import logging
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+# استيراد request و jsonify من flask للـ Webhook
+from flask import Flask, request, jsonify 
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes
-from flask import Flask
-from threading import Thread
+# إزالة استيراد Thread لأنه لم يعد مستخدماً
+
 # الاستيرادات الضرورية لـ Gemini API
 from google import genai
 from google.genai.errors import APIError
@@ -12,18 +14,8 @@ from google.genai.errors import APIError
 # 1. إعدادات البوت والروابط (الثوابت)
 # ======================================================================
 
-# إعداد Flask لإبقاء Render نشطاً (مهم لعمل البوت دائماً)
+# إعداد Flask (الآن هو المعالج الرئيسي)
 app = Flask(__name__)
-
-@app.route('/')
-def home():
-    # رد بسيط للتأكد من أن الخدمة تعمل في Render
-    return "Manar Bot is active and running (Polling mode)."
-
-def run_flask():
-    # تشغيل Flask على البورت المحدد من قبل Render
-    port = int(os.environ.get('PORT', 10000))
-    app.run(host='0.0.0.0', port=port)
 
 # إعداد السجلات
 logging.basicConfig(
@@ -42,17 +34,22 @@ INSTAGRAM = "https://www.instagram.com/manarmomran/"
 WHATSAPP_LINK = "https://api.whatsapp.com/send/?phone=905395448547&text&type=phone_number&app_absent=0"
 PHONE = "+905395448547"
 
+# إعدادات الـ Webhook
+# يتم تحديد البورت من Render، ونستخدم 10000 كقيمة افتراضية
+PORT = int(os.environ.get('PORT', 10000))
+# هذا المتغير يجب أن يتم إعداده في متغيرات بيئة Render (مثلاً: https://manar-telegram-bot-1.onrender.com)
+WEBHOOK_URL = os.environ.get('WEBHOOK_URL')
+
 # ----------------------------------------------------------------------
 # نظام التوليد المعزز بالاسترجاع (RAG)
 # ----------------------------------------------------------------------
 # 1. قراءة محتوى ملف قاعدة المعرفة (courses_data.txt)
 COURSE_DATA = ""
 try:
-    # قراءة الملف بترميز UTF-8 لدعم اللغة العربية
     with open("courses_data.txt", "r", encoding="utf-8", errors='ignore') as f:
         COURSE_DATA = f.read()
 except FileNotFoundError:
-    logger.warning("ملف courses_data.txt غير موجود. سيتم الاعتماد على معلومات Gemini العامة.")
+    logger.warning("ملف courses_data.txt غير موجود.")
     COURSE_DATA = "لم يتم توفير قاعدة معرفة خاصة. اعتمد على معرفتك، لكن التزم بهوية الدكتورة منار عمران."
 
 # 2. التوجيه القوي للنظام لضمان التخصص (System Prompt for RAG)
@@ -75,7 +72,7 @@ SYSTEM_PROMPT = f"""
 # 2. وظائف الأوامر الثابتة
 # ======================================================================
 
-# الأوامر الثابتة المستخدمة في دالة handle_message
+# وظائف الأوامر الثابتة التي تستخدم Markdown
 async def website(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     message = f"📚 موقع الدكتورة منار عمران الرسمي:\n[اضغط هنا لزيارة الموقع]({WEBSITE})"
     await update.message.reply_text(message, parse_mode='Markdown')
@@ -150,7 +147,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
 # معالج الرسائل النصية العامة
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    # ⚠️ أهم خطوة: تحويل الرسالة إلى أحرف صغيرة للمقارنة
+    # التحقق من الأوامر الثابتة
+    # ... (نفس الكود السابق للتعامل مع الردود الثابتة والإعلانات) ...
     text = update.message.text.lower()
     
     # ----------------------------------------------------------------------
@@ -162,7 +160,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     if any(keyword in text for keyword in ad_keywords):
         await update.message.reply_text(
             "⚠️ **تنبيه:** ممنوع نشر الإعلانات في هذا البوت.\n"
-            "يُرجى احترام قوانين المجموعة. شكراً لتفهمك! 🙏"
+            "يُرجى احترام قوانين المجموعة. شكراً لتفهمك! 🙏", parse_mode='Markdown'
         )
         return
     
@@ -191,82 +189,112 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     # 2. استخدام Gemini API للردود الذكية (لأي سؤال آخر غير ثابت)
     # ----------------------------------------------------------------------
     
-    # إرسال مؤشر الكتابة لتجنب اعتقاد المستخدم بأن البوت قد توقف
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
 
     try:
-        # قراءة المفتاح من متغيرات البيئة
         GEMINI_API_KEY = os.getenv('GEMINI_API_KEY')
         if not GEMINI_API_KEY:
-            logger.error("GEMINI_API_KEY غير متوفر في متغيرات البيئة.")
+            logger.error("GEMINI_API_KEY غير متوفر.")
             await update.message.reply_text("عذراً، مفتاح الذكاء الاصطناعي غير متوفر في إعدادات النظام.")
             return
 
-        # تهيئة العميل واستدعاء Gemini
         ai_client = genai.Client(api_key=GEMINI_API_KEY)
         
-        # إرسال الرسالة إلى Gemini مع الـ SYSTEM_PROMPT لضمان التخصص (RAG)
         response = ai_client.models.generate_content(
             model='gemini-2.5-flash',
             contents=update.message.text,
-            config={'system_instruction': SYSTEM_PROMPT} # إرسال التوجيه المتخصص هنا
+            config={'system_instruction': SYSTEM_PROMPT}
         )
 
-        # ⚠️ تغيير parse_mode إلى Plain Text لتفادي أخطاء التنسيق
+        # الرد نص عادي (Plain Text) فقط، دون parse_mode
         await update.message.reply_text(response.text) 
         return
 
-    except APIError:
-        # رسالة عند فشل اتصال API (قد تعني مشكلة في الفوترة/الحدود)
-        logger.error(f"Gemini API Error for message: {update.message.text}")
-        await update.message.reply_text("عذراً، حدث خطأ فني أثناء معالجة طلبك (Gemini API). يرجى التأكد من تفعيل الفوترة والمحاولة لاحقاً.")
+    except APIError as api_e:
+        logger.error(f"Gemini API Error: {api_e}")
+        await update.message.reply_text("عذراً، حدث خطأ فني أثناء معالجة طلبك (Gemini API).")
         return
 
     except Exception as e:
-        # رسالة لأي خطأ آخر غير متوقع (مثل مشكلة التنسيق)
         logger.error(f"An unexpected error occurred in handle_message: {e}")
-        # نرسل رسالة ناعمة لتجنب ظهور الخطأ للمستخدم
         await update.message.reply_text("عذراً، حدث خطأ غير متوقع. يرجى إعادة محاولة إرسال الرسالة. 😔")
         return
 
-# دالة معالجة الأخطاء (لأخطاء تلغرام غير المرتبطة بالرسائل)
+# دالة معالجة الأخطاء
 async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     logger.error(f"Exception while handling an update: {context.error}")
 
 
 # ======================================================================
-# 4. الدالة الرئيسية للتشغيل
+# 4. الدالة الرئيسية للتشغيل (Webhook)
 # ======================================================================
 
-def main():
-    # ⚠️ قراءة التوكن من متغيرات البيئة - هذا أهم شيء لاستقرار Render
-    BOT_TOKEN = os.getenv('BOT_TOKEN')
+# يتم استخدام توكن البوت كمسار للـ Webhook لأغراض أمنية
+BOT_TOKEN = os.getenv('BOT_TOKEN')
+WEBHOOK_PATH = f"/{BOT_TOKEN}"
+
+# مسار الـ Webhook الكامل الذي سيتم إرساله لتلغرام
+FULL_WEBHOOK_URL = f"{WEBHOOK_URL}{WEBHOOK_PATH}"
+
+# الـ Application (يجب تهيئته هنا ليكون متاحاً لـ main() و routes)
+application = Application.builder().token(BOT_TOKEN).build()
+
+# -----------------
+# مسارات Flask
+# -----------------
+
+@app.route(WEBHOOK_PATH, methods=["POST"])
+async def webhook_handler():
+    """معالج طلبات تلغرام الواردة."""
+    # يجب معالجة التحديث بشكل غير متزامن
+    try:
+        # إرسال التحديث إلى مكتبة telegram.ext للمعالجة
+        update = Update.de_json(request.get_json(force=True), application.bot)
+        # تشغيل المعالجات
+        await application.process_update(update)
+    except Exception as e:
+        logger.error(f"Error processing update: {e}")
     
-    # يجب أن تتوقف الدالة فوراً إذا لم يكن التوكن موجوداً
+    # يجب على الخادم الرد بـ 200 OK فوراً
+    return jsonify({"status": "ok"}), 200
+
+@app.route('/', methods=['GET'])
+def health_check():
+    """مسار اختبار صحة الخدمة لـ Render"""
+    return "Bot is running via Webhook!", 200
+
+# -----------------
+
+def main():
     if not BOT_TOKEN:
-        logger.error("BOT_TOKEN environment variable not set. Exiting.")
+        logger.error("BOT_TOKEN غير متوفر. يتم الإغلاق.")
+        return
+        
+    if not WEBHOOK_URL:
+        logger.error("WEBHOOK_URL غير متوفر. يجب إعداده. يتم الإغلاق.")
         return
 
-    # إنشاء التطبيق
-    application = Application.builder().token(BOT_TOKEN).build()
-    
     # إضافة المعالجات
     application.add_handler(CommandHandler("start", start))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     application.add_handler(CallbackQueryHandler(button_handler))
-    
-    # إضافة معالج الأخطاء
     application.add_error_handler(error_handler)
-    
-    # بدء تشغيل Flask في خيط منفصل لإبقاء الخدمة نشطة على Render
-    thread = Thread(target=run_flask)
-    thread.start()
-    
-    logger.info("Bot is starting (Polling mode)...")
-    
-    # بدء البوت بنظام Polling (الاستطلاع)
-    application.run_polling(poll_interval=3)
+
+    # 1. إعداد الـ Webhook في خوادم تلغرام (خطوة أساسية)
+    # يجب القيام بها قبل تشغيل Flask
+    try:
+        logger.info(f"Setting webhook to: {FULL_WEBHOOK_URL}")
+        application.bot.set_webhook(url=FULL_WEBHOOK_URL)
+        logger.info("Webhook set successfully.")
+    except Exception as e:
+        logger.error(f"Failed to set webhook: {e}")
+        return # التوقف إذا فشل الـ Webhook
+
+    # 2. تشغيل Flask (الخادم يستقبل الطلبات الآن)
+    logger.info(f"Bot is starting (Webhook mode) on port {PORT}...")
+    app.run(host='0.0.0.0', port=PORT)
 
 
 if __name__ == '__main__':
+    # يجب أن يتم تشغيل الدالة الرئيسية مباشرة
     main()
