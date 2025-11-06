@@ -49,7 +49,7 @@ PHONE = "+905395448547"
 COURSE_DATA = ""
 try:
     # قراءة الملف بترميز UTF-8 لدعم اللغة العربية
-    with open("courses_data.txt", "r", encoding="utf-8") as f:
+    with open("courses_data.txt", "r", encoding="utf-8", errors='ignore') as f:
         COURSE_DATA = f.read()
 except FileNotFoundError:
     logger.warning("ملف courses_data.txt غير موجود. سيتم الاعتماد على معلومات Gemini العامة.")
