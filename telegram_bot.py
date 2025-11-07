@@ -2,21 +2,16 @@ import os
 import logging
 import asyncio 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-# استيراد request و jsonify من flask للـ Webhook
+# NEW: Import WsgiToAsgi to bridge Flask (WSGI) to Uvicorn (ASGI)
+from asgiref.wsgi import WsgiToAsgi 
 from flask import Flask, request, jsonify 
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes
-# إزالة استيراد Thread لأنه لم يعد مستخدماً
-
-# الاستيرادات الضرورية لـ Gemini API
 from google import genai
 from google.genai.errors import APIError
 
 # ======================================================================
 # 1. إعدادات البوت والروابط (الثوابت)
 # ======================================================================
-
-# إعداد Flask (الآن هو المعالج الرئيسي)
-app = Flask(__name__)
 
 # إعداد السجلات
 logging.basicConfig(
@@ -36,22 +31,16 @@ WHATSAPP_LINK = "https://api.whatsapp.com/send/?phone=905395448547&text&type=pho
 PHONE = "+905395448547"
 
 # إعدادات الـ Webhook
-# يتم تحديد البورت من Render، ونستخدم 10000 كقيمة افتراضية
 PORT = int(os.environ.get('PORT', 10000))
-# هذا المتغير يجب أن يتم إعداده في متغيرات بيئة Render
 WEBHOOK_URL = os.environ.get('WEBHOOK_URL')
 
-# يتم استخدام توكن البوت كمسار للـ Webhook لأغراض أمنية
 BOT_TOKEN = os.getenv('BOT_TOKEN')
 WEBHOOK_PATH = f"/{BOT_TOKEN}"
-
-# مسار الـ Webhook الكامل الذي سيتم إرساله لتلغرام
 FULL_WEBHOOK_URL = f"{WEBHOOK_URL}{WEBHOOK_PATH}"
 
 # ----------------------------------------------------------------------
 # نظام التوليد المعزز بالاسترجاع (RAG)
 # ----------------------------------------------------------------------
-# 1. قراءة محتوى ملف قاعدة المعرفة (courses_data.txt)
 COURSE_DATA = ""
 try:
     with open("courses_data.txt", "r", encoding="utf-8", errors='ignore') as f:
@@ -60,7 +49,6 @@ except FileNotFoundError:
     logger.warning("ملف courses_data.txt غير موجود.")
     COURSE_DATA = "لم يتم توفير قاعدة معرفة خاصة. اعتمد على معرفتك، لكن التزم بهوية الدكتورة منار عمران."
 
-# 2. التوجيه القوي للنظام لضمان التخصص (System Prompt for RAG)
 SYSTEM_PROMPT = f"""
 أنت بوت الدردشة الرسمي والمخصص للدكتورة منار عمران في أكاديمية منارات.
 مهمتك الوحيدة هي الإجابة على استفسارات المستخدمين بشكل احترافي، دقيق، وداعم.
@@ -77,10 +65,9 @@ SYSTEM_PROMPT = f"""
 """
 
 # ======================================================================
-# 2. وظائف الأوامر الثابتة
+# 2. وظائف الأوامر الثابتة (باستخدام parse_mode='Markdown')
 # ======================================================================
 
-# وظائف الأوامر الثابتة التي تستخدم Markdown
 async def website(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     message = f"📚 موقع الدكتورة منار عمران الرسمي:\n[اضغط هنا لزيارة الموقع]({WEBSITE})"
     await update.message.reply_text(message, parse_mode='Markdown')
@@ -119,7 +106,6 @@ async def social(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 # 3. معالجات تلغرام الرئيسية (Start, Buttons, Message)
 # ======================================================================
 
-# أمر البداية
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     message = (
         "✨ *أهلاً بك في بوت الدكتورة منار عمران وأكاديمية منارات الذكي!* ✨\n\n"
@@ -137,7 +123,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     await update.message.reply_text(message, reply_markup=reply_markup, parse_mode='Markdown')
 
-# وظيفة الرد على الأزرار الداخلية
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     await query.answer()
@@ -152,18 +137,13 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         )
         await query.edit_message_text(text=message, parse_mode='Markdown')
 
-
-# معالج الرسائل النصية العامة
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    # التحقق من الأوامر الثابتة
-    # ... (نفس الكود السابق للتعامل مع الردود الثابتة والإعلانات) ...
     text = update.message.text.lower()
     
     # ----------------------------------------------------------------------
-    # 1. التحقق من الإعلانات والأوامر الثابتة (لأولوية الردود السريعة والمخصصة)
+    # 1. التحقق من الإعلانات والأوامر الثابتة
     # ----------------------------------------------------------------------
     
-    # التحقق من الإعلانات (لضمان الانضباط)
     ad_keywords = ['إعلان', 'اعلان', 'للبيع', 'للشراء', 'تسويق', 'منتج', 'خدمة مجانية', 'تبادل']
     if any(keyword in text for keyword in ad_keywords):
         await update.message.reply_text(
@@ -172,7 +152,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         )
         return
     
-    # الرد على طلبات ثابتة (باستدعاء الوظائف الثابتة)
     if any(word in text for word in ['موقع', 'الموقع', 'موقعك', 'website']):
         await website(update, context)
         return
@@ -194,7 +173,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         return
     
     # ----------------------------------------------------------------------
-    # 2. استخدام Gemini API للردود الذكية (لأي سؤال آخر غير ثابت)
+    # 2. استخدام Gemini API للردود الذكية
     # ----------------------------------------------------------------------
     
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
@@ -214,7 +193,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             config={'system_instruction': SYSTEM_PROMPT}
         )
 
-        # الرد نص عادي (Plain Text) فقط، دون parse_mode
         await update.message.reply_text(response.text) 
         return
 
@@ -228,8 +206,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await update.message.reply_text("عذراً، حدث خطأ غير متوقع. يرجى إعادة محاولة إرسال الرسالة. 😔")
         return
 
-# دالة معالجة الأخطاء
-async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     logger.error(f"Exception while handling an update: {context.error}")
 
 
@@ -237,39 +214,46 @@ async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # 4. الدالة الرئيسية للتشغيل (Webhook)
 # ======================================================================
 
-# الـ Application (يجب تهيئته هنا ليكون متاحاً لـ main() و routes)
-application = Application.builder().token(BOT_TOKEN).build()
+# 1. إعداد Flask (تطبيق WSGI الأصلي)
+wsgi_app = Flask(__name__) # <<< متغير جديد للتطبيق الأصلي
 
-# 🟢 تم نقل إضافة المعالجات إلى هنا لضمان تعريفها عند تحميل الوحدة
+# 2. إعداد Telegram Application
+application = Application.builder().token(BOT_TOKEN).build()
 application.add_handler(CommandHandler("start", start))
 application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 application.add_handler(CallbackQueryHandler(button_handler))
 application.add_error_handler(error_handler)
 
 # -----------------
-# مسارات Flask
+# مسارات Flask (تستخدم wsgi_app)
 # -----------------
 
-@app.route(WEBHOOK_PATH, methods=["POST"])
+@wsgi_app.route(WEBHOOK_PATH, methods=["POST"])
 async def webhook_handler():
     """معالج طلبات تلغرام الواردة."""
-    # يجب معالجة التحديث بشكل غير متزامن
     try:
-        # إرسال التحديث إلى مكتبة telegram.ext للمعالجة
         update = Update.de_json(request.get_json(force=True), application.bot)
-        # تشغيل المعالجات
         await application.process_update(update)
     except Exception as e:
         logger.error(f"Error processing update: {e}")
     
-    # يجب على الخادم الرد بـ 200 OK فوراً
     return jsonify({"status": "ok"}), 200
 
-@app.route('/', methods=['GET'])
+@wsgi_app.route('/', methods=['GET'])
 def health_check():
     """مسار اختبار صحة الخدمة لـ Render"""
     return "Bot is running via Webhook!", 200
 
+# -----------------
+# 3. التطبيق النهائي المكشوف لـ Gunicorn/Uvicorn
+# -----------------
+# يتم تغليف تطبيق Flask (wsgi_app) باستخدام WsgiToAsgi
+# ويتم تعيينه للمتغير 'app' الذي تبحث عنه Gunicorn.
+app = WsgiToAsgi(wsgi_app) 
+
+
+# -----------------
+# 4. دالة الإطلاق والتحقق من الـ Webhook
 # -----------------
 
 def main():
@@ -281,20 +265,15 @@ def main():
         logger.error("WEBHOOK_URL غير متوفر. يجب إعداده. يتم الإغلاق.")
         return
 
-    # 1. إعداد الـ Webhook في خوادم تلغرام (خطوة أساسية)
-    # يجب القيام بها قبل تشغيل Flask
+    # إعداد الـ Webhook (يتم تنفيذه مرة واحدة عبر 'python telegram_bot.py' في مرحلة النشر)
     try:
         logger.info(f"Setting webhook to: {FULL_WEBHOOK_URL}")
-        # استخدام asyncio.run لحل مشكلة 'await'
         asyncio.run(application.bot.set_webhook(url=FULL_WEBHOOK_URL))
         logger.info("Webhook set successfully.")
     except Exception as e:
         logger.error(f"Failed to set webhook: {e}")
-        return # التوقف إذا فشل الـ Webhook
-    
-    # تم إزالة app.run() هنا. Gunicorn سيتولى تشغيل الخادم.
+        return
 
 
 if __name__ == '__main__':
-    # يجب أن يتم تشغيل الدالة الرئيسية مباشرة
     main()
