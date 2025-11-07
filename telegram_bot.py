@@ -1,13 +1,10 @@
 import os
 import logging
-import asyncio # 🟢 تمت الإضافة لحل مشكلة 'await' في main
+import asyncio 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 # استيراد request و jsonify من flask للـ Webhook
 from flask import Flask, request, jsonify 
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes
-# إزالة استيراد Thread لأنه لم يعد مستخدماً
-
-# الاستيرادات الضرورية لـ Gemini API
 from google import genai
 from google.genai.errors import APIError
 
@@ -15,7 +12,7 @@ from google.genai.errors import APIError
 # 1. إعدادات البوت والروابط (الثوابت)
 # ======================================================================
 
-# إعداد Flask (الآن هو المعالج الرئيسي)
+# إعداد Flask 
 app = Flask(__name__)
 
 # إعداد السجلات
@@ -36,9 +33,7 @@ WHATSAPP_LINK = "https://api.whatsapp.com/send/?phone=905395448547&text&type=pho
 PHONE = "+905395448547"
 
 # إعدادات الـ Webhook
-# يتم تحديد البورت من Render، ونستخدم 10000 كقيمة افتراضية
 PORT = int(os.environ.get('PORT', 10000))
-# هذا المتغير يجب أن يتم إعداده في متغيرات بيئة Render
 WEBHOOK_URL = os.environ.get('WEBHOOK_URL')
 
 # ----------------------------------------------------------------------
@@ -70,7 +65,7 @@ SYSTEM_PROMPT = f"""
 """
 
 # ======================================================================
-# 2. وظائف الأوامر الثابتة
+# 2. وظائف الأوامر الثابتة (لا يوجد تغيير هنا)
 # ======================================================================
 
 # وظائف الأوامر الثابتة التي تستخدم Markdown
@@ -109,7 +104,7 @@ async def social(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(message, parse_mode='Markdown')
 
 # ======================================================================
-# 3. معالجات تلغرام الرئيسية (Start, Buttons, Message)
+# 3. معالجات تلغرام الرئيسية (Start, Buttons, Message, Error) (لا يوجد تغيير هنا)
 # ======================================================================
 
 # أمر البداية
@@ -148,8 +143,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
 # معالج الرسائل النصية العامة
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    # التحقق من الأوامر الثابتة
-    # ... (نفس الكود السابق للتعامل مع الردود الثابتة والإعلانات) ...
     text = update.message.text.lower()
     
     # ----------------------------------------------------------------------
@@ -227,7 +220,7 @@ async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # ======================================================================
-# 4. الدالة الرئيسية للتشغيل (Webhook)
+# 4. وظيفة التهيئة وإضافة المعالجات (الجديدة)
 # ======================================================================
 
 # يتم استخدام توكن البوت كمسار للـ Webhook لأغراض أمنية
@@ -237,19 +230,60 @@ WEBHOOK_PATH = f"/{BOT_TOKEN}"
 # مسار الـ Webhook الكامل الذي سيتم إرساله لتلغرام
 FULL_WEBHOOK_URL = f"{WEBHOOK_URL}{WEBHOOK_PATH}"
 
-# الـ Application (يجب تهيئته هنا ليكون متاحاً لـ main() و routes)
-application = Application.builder().token(BOT_TOKEN).build()
+# يتم تهيئته Application كمتغير عام هنا ليتمكن Flask من استخدامه
+application = None
+
+def run_app_setup():
+    """
+    يقوم بتهيئة كائن Application وإضافة المعالجات وإعداد Webhook.
+    سيتم تشغيله مرة واحدة لكل عامل (Worker) في Gunicorn.
+    """
+    global application # نستخدم المتغير العام
+
+    if not BOT_TOKEN:
+        logger.error("BOT_TOKEN غير متوفر. يتم الإغلاق.")
+        raise ValueError("BOT_TOKEN is missing")
+        
+    if not WEBHOOK_URL:
+        logger.error("WEBHOOK_URL غير متوفر. يجب إعداده. يتم الإغلاق.")
+        raise ValueError("WEBHOOK_URL is missing")
+
+    # تهيئة Application
+    application = Application.builder().token(BOT_TOKEN).build()
+
+    # إضافة المعالجات
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    application.add_handler(CallbackQueryHandler(button_handler))
+    application.add_error_handler(error_handler)
+
+    # 1. إعداد الـ Webhook في خوادم تلغرام (خطوة أساسية)
+    try:
+        logger.info(f"Setting webhook to: {FULL_WEBHOOK_URL}")
+        # استخدام asyncio.run لحل مشكلة 'await' في دالة التهيئة
+        asyncio.run(application.bot.set_webhook(url=FULL_WEBHOOK_URL))
+        logger.info("Webhook set successfully.")
+    except Exception as e:
+        logger.error(f"Failed to set webhook: {e}")
+        # لا نغلق التطبيق هنا، نتركه يعمل بدون Webhook محدث ليتمكن من معالجة الطلبات
+        # إذا تم تعيينه مسبقاً، لكن هذا التنبيه سيظهر.
+
+    logger.info("Application setup complete. Ready to receive updates.")
+    return application.run_polling() # لا نحتاج إلى تشغيل polling، فقط نحتاج إلى تهيئة الـ application
 
 # -----------------
 # مسارات Flask
 # -----------------
+# 🚨 هام: يتم استدعاء دالة التهيئة هنا لضمان أن Gunicorn يشغلها أولاً.
+run_app_setup()
+
 
 @app.route(WEBHOOK_PATH, methods=["POST"])
 async def webhook_handler():
     """معالج طلبات تلغرام الواردة."""
     # يجب معالجة التحديث بشكل غير متزامن
     try:
-        # إرسال التحديث إلى مكتبة telegram.ext للمعالجة
+        # 🟢 الآن application هو متغير عام مهيأ
         update = Update.de_json(request.get_json(force=True), application.bot)
         # تشغيل المعالجات
         await application.process_update(update)
@@ -266,36 +300,6 @@ def health_check():
 
 # -----------------
 
-def main():
-    if not BOT_TOKEN:
-        logger.error("BOT_TOKEN غير متوفر. يتم الإغلاق.")
-        return
-        
-    if not WEBHOOK_URL:
-        logger.error("WEBHOOK_URL غير متوفر. يجب إعداده. يتم الإغلاق.")
-        return
+# 🚨 تم حذف دالة main() و __name__ == '__main__':
+# يتم الآن استدعاء app بواسطة Gunicorn مباشرة
 
-    # إضافة المعالجات
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-    application.add_handler(CallbackQueryHandler(button_handler))
-    application.add_error_handler(error_handler)
-
-    # 1. إعداد الـ Webhook في خوادم تلغرام (خطوة أساسية)
-    # يجب القيام بها قبل تشغيل Flask
-    try:
-        logger.info(f"Setting webhook to: {FULL_WEBHOOK_URL}")
-        # 🟢 تم التعديل: استخدام asyncio.run لحل مشكلة 'await'
-        asyncio.run(application.bot.set_webhook(url=FULL_WEBHOOK_URL))
-        logger.info("Webhook set successfully.")
-    except Exception as e:
-        logger.error(f"Failed to set webhook: {e}")
-        return # التوقف إذا فشل الـ Webhook
-    
-    # 🔴 تم إزالة استدعاء app.run() هنا. سيتم تشغيل الخادم بواسطة Gunicorn/Uvicorn.
-    # البرنامج يخرج الآن بعد إعداد Webhook.
-
-
-if __name__ == '__main__':
-    # يجب أن يتم تشغيل الدالة الرئيسية مباشرة
-    main()
