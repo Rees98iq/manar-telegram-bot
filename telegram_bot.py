@@ -1,5 +1,6 @@
 import os
 import logging
+import asyncio # 🟢 تمت الإضافة لحل مشكلة 'await' في main
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 # استيراد request و jsonify من flask للـ Webhook
 from flask import Flask, request, jsonify 
@@ -37,7 +38,7 @@ PHONE = "+905395448547"
 # إعدادات الـ Webhook
 # يتم تحديد البورت من Render، ونستخدم 10000 كقيمة افتراضية
 PORT = int(os.environ.get('PORT', 10000))
-# هذا المتغير يجب أن يتم إعداده في متغيرات بيئة Render (مثلاً: https://manar-telegram-bot-1.onrender.com)
+# هذا المتغير يجب أن يتم إعداده في متغيرات بيئة Render
 WEBHOOK_URL = os.environ.get('WEBHOOK_URL')
 
 # ----------------------------------------------------------------------
@@ -284,7 +285,8 @@ def main():
     # يجب القيام بها قبل تشغيل Flask
     try:
         logger.info(f"Setting webhook to: {FULL_WEBHOOK_URL}")
-        application.bot.set_webhook(url=FULL_WEBHOOK_URL)
+        # 🟢 تم التعديل: استخدام asyncio.run لحل مشكلة 'await'
+        asyncio.run(application.bot.set_webhook(url=FULL_WEBHOOK_URL))
         logger.info("Webhook set successfully.")
     except Exception as e:
         logger.error(f"Failed to set webhook: {e}")
