@@ -291,10 +291,9 @@ def main():
     except Exception as e:
         logger.error(f"Failed to set webhook: {e}")
         return # التوقف إذا فشل الـ Webhook
-
-    # 2. تشغيل Flask (الخادم يستقبل الطلبات الآن)
-    logger.info(f"Bot is starting (Webhook mode) on port {PORT}...")
-    app.run(host='0.0.0.0', port=PORT)
+    
+    # 🔴 تم إزالة استدعاء app.run() هنا. سيتم تشغيل الخادم بواسطة Gunicorn/Uvicorn.
+    # البرنامج يخرج الآن بعد إعداد Webhook.
 
 
 if __name__ == '__main__':
