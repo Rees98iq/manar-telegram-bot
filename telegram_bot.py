@@ -2,7 +2,6 @@ import os
 import logging
 import asyncio 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-# NEW: Import WsgiToAsgi to bridge Flask (WSGI) to Uvicorn (ASGI)
 from asgiref.wsgi import WsgiToAsgi 
 from flask import Flask, request, jsonify 
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes
@@ -215,7 +214,7 @@ def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ======================================================================
 
 # 1. إعداد Flask (تطبيق WSGI الأصلي)
-wsgi_app = Flask(__name__) # <<< متغير جديد للتطبيق الأصلي
+wsgi_app = Flask(__name__) 
 
 # 2. إعداد Telegram Application
 application = Application.builder().token(BOT_TOKEN).build()
@@ -225,12 +224,35 @@ application.add_handler(CallbackQueryHandler(button_handler))
 application.add_error_handler(error_handler)
 
 # -----------------
+# 3. التطبيق النهائي المكشوف لـ Gunicorn/Uvicorn
+# -----------------
+# يتم تغليف تطبيق Flask (wsgi_app) باستخدام WsgiToAsgi
+app = WsgiToAsgi(wsgi_app) 
+
+# -----------------
 # مسارات Flask (تستخدم wsgi_app)
 # -----------------
+
+# متغير عالمي لتتبع حالة التهيئة داخل العامل (Worker)
+worker_initialized = False
 
 @wsgi_app.route(WEBHOOK_PATH, methods=["POST"])
 async def webhook_handler():
     """معالج طلبات تلغرام الواردة."""
+    global worker_initialized
+    
+    # 🔴 الحل النهائي: تهيئة التطبيق في العامل لأول مرة 🔴
+    if not worker_initialized:
+        try:
+            # تهيئة التطبيق بشكل صريح للعمل داخل حلقة الأحداث للعامل
+            await application.initialize() 
+            worker_initialized = True
+            logger.info("Telegram Application initialized successfully in worker.")
+        except Exception as init_e:
+            logger.error(f"Failed to initialize Application in worker: {init_e}")
+            # إذا فشلت التهيئة، أرسل خطأ
+            return jsonify({"status": "worker_init_failed"}), 500
+
     try:
         update = Update.de_json(request.get_json(force=True), application.bot)
         await application.process_update(update)
@@ -244,16 +266,9 @@ def health_check():
     """مسار اختبار صحة الخدمة لـ Render"""
     return "Bot is running via Webhook!", 200
 
-# -----------------
-# 3. التطبيق النهائي المكشوف لـ Gunicorn/Uvicorn
-# -----------------
-# يتم تغليف تطبيق Flask (wsgi_app) باستخدام WsgiToAsgi
-# ويتم تعيينه للمتغير 'app' الذي تبحث عنه Gunicorn.
-app = WsgiToAsgi(wsgi_app) 
-
 
 # -----------------
-# 4. دالة الإطلاق والتحقق من الـ Webhook
+# 5. دالة الإطلاق والتحقق من الـ Webhook (للتشغيل لمرة واحدة)
 # -----------------
 
 def main():
@@ -268,6 +283,7 @@ def main():
     # إعداد الـ Webhook (يتم تنفيذه مرة واحدة عبر 'python telegram_bot.py' في مرحلة النشر)
     try:
         logger.info(f"Setting webhook to: {FULL_WEBHOOK_URL}")
+        # يتم استخدام asyncio.run هنا لمرة واحدة فقط لتهيئة الـ Webhook
         asyncio.run(application.bot.set_webhook(url=FULL_WEBHOOK_URL))
         logger.info("Webhook set successfully.")
     except Exception as e:
