@@ -1,3 +1,5 @@
-python-telegram-bot==20.0
-flask==3.0.0
+python-telegram-bot[async]
 google-genai
+Flask[async]             # 👈 تم إضافة [async]
+gunicorn                 # 👈 خادم WSGI للإنتاج
+uvicorn                  # 👈 عامل (Worker) غير متزامن
